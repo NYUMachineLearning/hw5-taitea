@@ -22,7 +22,7 @@ library(tree)
 library(randomForest)
 library(MASS)
 library(gbm)
-
+library(mlbench)
 ```
 ## The Carseats Dataset 
 
@@ -147,7 +147,6 @@ rf.boston
 #Each time the tree comes to split a node, 4 variables would be selected at random, then the split would be confined to 1 of those 4 variables.
 
 ##Lets try a range of mtry (number of variables selected at random at each split)
-
 oob.err = double(13)
 test.err = double(13)
 
@@ -196,7 +195,102 @@ abline(h = min(test.err), col = "red")
 
 1. Attempt a regression tree-based method (not covered in this tutorial) on a reasonable dataset of your choice. Explain the results. 
 
+Regression trees can be built for continuous outcomes as well, so the following is a regression tree analysis on the maximum one-hour-avg ozone value in the LA Ozone dataset.
+
+```{r}
+##define dataset and explore variables
+data(Ozone)
+head(Ozone)
+
+##remove missing values
+Ozone <- na.omit(Ozone)
+```
+
+```{r}
+##build a regression tree to predict tax based on all other variables in the dataset
+tree.model <- tree(V4 ~ ., data=Ozone)
+##plot the resulting tree
+plot(tree.model)
+##display residuals to evaluate model quality
+summary(tree.model)
+```
+
+```{r}
+##build a second model by adjusting the acceptable error rate reduction from tree growth
+tree.model2 <- tree(V4 ~ ., data=Ozone, mindev=0.005)
+##plot the resulting tree
+plot(tree.model2)
+##display residuals to evaluate model quality
+summary(tree.model2)
+```
+
+Decreasing the acceptable error rate reduction in tree growth predictably made for a more complex tree with more nodes. Both chose and used the same set of predictor variables. The mean squared error decreases (11.45 to 9.06) as the tree fits the data more accurately, but results in a model that may be overfit to the training data and suffer in performance on an outside dataset.
+
 2. Attempt both a bagging and boosting method on a reasonable dataset of your choice. Explain the results.
 
+```{r}
+##define dataset and explore variables
+data(Ozone)
+head(Ozone)
 
+##remove missing values
+Ozone <- na.omit(Ozone)
 
+#set seed for reproducibility 
+set.seed(29)
+
+#split into train and test sets (100 and 106 respectively)
+train = sample(1:nrow(Ozone), 100)
+
+#fit training subset of data to model 
+rf.ozone = randomForest(V4~., data = Ozone, subset = train)
+rf.ozone
+
+#No. of variables tried at each split: 4 
+#Each time the tree comes to split a node, 4 variables would be selected at random, then the split would be confined to 1 of those 4 variables.
+
+##Restructure dataframe to pull outcome variable to the front
+col_idx <- grep("V4", names(Ozone))
+Ozone <- Ozone[, c((1:ncol(Ozone))[-col_idx], col_idx)]
+names(Ozone)
+
+##Lets try a range of mtry (number of variables selected at random at each split)
+oob.err = double(12)
+test.err = double(12)
+
+#In a loop of mtry from 1 to 13, you first fit the randomForest to the train dataset
+for(mtry in 1:12){
+  fit = randomForest(V4~., data = Ozone, subset=train, mtry=mtry, ntree = 350)
+  oob.err[mtry] = fit$mse[350] ##extract Mean-squared-error 
+  pred = predict(fit, Ozone[-train,]) #predict on test dataset
+  test.err[mtry] = with(Ozone[-train,], mean( (V4-pred)^2 )) #compute test error
+}
+
+#Visualize 
+matplot(1:mtry, cbind(test.err, oob.err), pch = 23, col = c("red", "blue"), type = "b", ylab="Mean Squared Error")
+legend("topright", legend = c("OOB", "Test"), pch = 23, col = c("red", "blue"))
+```
+
+```{r}
+#Gradient Boosting Model
+boost.ozone = gbm(V4~., data = Ozone[train,], distribution = "gaussian", n.trees = 10000, shrinkage = 0.01, interaction.depth = 4)
+
+#Variable Importance Plot
+summary(boost.ozone)
+
+#Visualize important variables of interest
+plot(boost.ozone,i="V1")
+plot(boost.ozone,i="V2")
+plot(boost.ozone,i="V3")
+
+#Predict on test set
+n.trees = seq(from = 100, to = 10000, by = 100)
+predmat = predict(boost.ozone, newdata = Ozone[-train,], n.trees = n.trees)
+dim(predmat)
+
+#Visualize Boosting Error Plot
+boost.err = with(Ozone[-train,], apply( (predmat - V4)^2, 2, mean) )
+plot(n.trees, boost.err, pch = 23, ylab = "Mean Squared Error", xlab = "# Trees", main = "Boosting Test Error")
+```
+
+Both bagging and boosting on this dataset actually resulted in worse model performance than the baseline Random Forest that I created in the first section. The fact that both methods resulted in worse performance is probably indicative that the original model was already optimized, and that the dataset I used could not be reduced in complexity any further due to the variation of the data. The purpose of bagging is to reduce the complexity of models that overfit a training dataset, however, if the model is already optimally complex, then reducing it further results in a less accurate model. Alternatively, the purpose of boosting is to increase the complexity of a model that has high bias, but again, if the model is already optimized, then increasing the complexity will result in worse performance.
